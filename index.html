@@ -882,9 +882,9 @@ function renderResult(){
 function renderGridTable(host, data){
   // data: {title, days, periods, cells: [ [ {s,o,c} | null, ...periods ], ...days ] }
   let rows = "";
-  data.days.forEach((d,di)=>{
-    rows += `<tr><td class="period-label">${escapeHtml(d)}</td>`;
-    for(let p=0;p<data.periods;p++){
+  for(let p=0;p<data.periods;p++){
+    rows += `<tr><td class="period-label">Period ${p+1}</td>`;
+    data.days.forEach((d,di)=>{
       const cell = data.cells[di] ? data.cells[di][p] : null;
       if(cell){
         rows += `<td style="background:${cell.c||'#4c8dff'}22;">
@@ -895,12 +895,12 @@ function renderGridTable(host, data){
       } else {
         rows += `<td><div class="cell-block"><span class="cell-free">Free</span></div></td>`;
       }
-    }
+    });
     rows += `</tr>`;
-  });
-  const periodHeaders = Array.from({length:data.periods}, (_,i)=>`<th>Period ${i+1}</th>`).join("");
+  }
+  const dayHeaders = data.days.map(d=>`<th>${escapeHtml(d)}</th>`).join("");
   host.innerHTML = `<div class="grid-wrap"><table class="tt-grid">
-    <thead><tr><th class="corner">${escapeHtml(data.title)}</th>${periodHeaders}</tr></thead>
+    <thead><tr><th class="corner">${escapeHtml(data.title)}</th>${dayHeaders}</tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
 
