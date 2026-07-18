@@ -257,12 +257,14 @@
 
   <section id="sharedViewSection" style="display:none;">
     <div class="card">
-      <h2 id="sharedTitle">Shared timetable</h2>
-      <p class="hint">This is a read-only timetable shared with you — you can view or print it, but not edit it here.</p>
+      <h2>Shared School Timetable</h2>
+      <p class="hint">This is a read-only timetable shared with you — pick any class or teacher below to view their schedule.</p>
       <div class="no-print" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;">
         <button class="btn-outline btn-small" id="btnSharedPrint">Print / Save as PDF</button>
         <button class="btn-ghost btn-small" id="btnSharedNew" style="color:var(--accent-dark);border-color:var(--accent);">Create my own timetable</button>
       </div>
+      <div class="tt-tabs no-print" id="sharedViewTabs"></div>
+      <div class="print-title" id="sharedPrintTitle"></div>
       <div id="sharedGridHost"></div>
     </div>
   </section>
@@ -795,90 +797,94 @@ function renderResult(){
   let html = `<div class="tt-tabs no-print" id="viewTabs"></div>`;
   html += `<div class="no-print" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <button class="btn-outline btn-small" id="btnPrint">Print / Save as PDF</button>
-      <button class="btn-outline btn-small" id="btnCopyLink">🔗 Copy shareable link</button>
+      <button class="btn-outline btn-small" id="btnCopyLink">🔗 Copy shareable link (whole timetable)</button>
       <span id="linkMsg" style="font-size:13px;color:var(--good);"></span>
     </div>`;
   html += `<div class="print-title" id="printTitle"></div>`;
   html += `<div id="gridHost"></div>`;
   area.innerHTML = html;
 
+  const shareData = {
+    days, periods: P,
+    classes: state.classes.map(c=>({id:c.id, name:c.name})),
+    teachers: state.teachers.map(t=>({id:t.id, name:t.name})),
+    subjects: state.subjects.map(s=>({id:s.id, classId:s.classId, teacherId:s.teacherId, name:s.name, color:s.color})),
+    grid
+  };
+
+  mountTimetableViewer({
+    tabsHost: document.getElementById("viewTabs"),
+    gridHost: document.getElementById("gridHost"),
+    printTitleHost: document.getElementById("printTitle")
+  }, shareData);
+
+  document.getElementById("btnPrint").addEventListener("click", ()=>window.print());
+  document.getElementById("btnCopyLink").addEventListener("click", ()=>{
+    copyShareLink({v:2, ...shareData});
+  });
+}
+
+/* ============ SHARED TIMETABLE VIEWER (used live and for shared links) ============ */
+function mountTimetableViewer(els, data){
   const views = [
-    ...state.classes.map(c=>({type:"class", id:c.id, label:c.name})),
-    ...state.teachers.map(t=>({type:"teacher", id:t.id, label:t.name}))
+    ...data.classes.map(c=>({type:"class", id:c.id, label:c.name})),
+    ...data.teachers.map(t=>({type:"teacher", id:t.id, label:t.name}))
   ];
 
-  let currentView = views[0];
-
-  const tabsWrap = document.getElementById("viewTabs");
-  views.forEach((v,i)=>{
-    const b = document.createElement("button");
-    b.textContent = (v.type==="teacher"?"👤 ":"🏫 ") + v.label;
-    b.className = i===0 ? "active" : "";
-    b.addEventListener("click", ()=>{
-      tabsWrap.querySelectorAll("button").forEach(x=>x.classList.remove("active"));
-      b.classList.add("active");
-      currentView = v;
-      drawGrid(v);
-      document.getElementById("linkMsg").textContent = "";
-    });
-    tabsWrap.appendChild(b);
-  });
-
-  function buildCellData(view){
-    // compact per-day/per-period export: {s: subject name, o: other party label, c: color}
-    const cells = days.map(d=>{
+  function cellsFor(view){
+    return data.days.map(d=>{
       const dayCells = [];
-      for(let p=0;p<P;p++){
-        let subjId = null;
-        let otherLabel = null;
+      for(let p=0;p<data.periods;p++){
+        let subjId = null, otherLabel = null;
         if(view.type === "class"){
-          subjId = grid[view.id][d][p];
+          subjId = (data.grid[view.id] && data.grid[view.id][d]) ? data.grid[view.id][d][p] : null;
         } else {
-          for(const c of state.classes){
-            const sid = grid[c.id][d][p];
+          for(const c of data.classes){
+            const sid = (data.grid[c.id] && data.grid[c.id][d]) ? data.grid[c.id][d][p] : null;
             if(sid){
-              const subj = state.subjects.find(s=>s.id===sid);
+              const subj = data.subjects.find(s=>s.id===sid);
               if(subj && subj.teacherId === view.id){ subjId = sid; otherLabel = c.name; break; }
             }
           }
         }
         if(subjId){
-          const subj = state.subjects.find(s=>s.id===subjId);
-          const teacher = state.teachers.find(t=>t.id===subj.teacherId);
-          dayCells.push({s: subj.name, o: view.type==="class" ? teacher.name : otherLabel, c: subj.color});
+          const subj = data.subjects.find(s=>s.id===subjId);
+          const teacher = data.teachers.find(t=>t.id===subj.teacherId);
+          dayCells.push({s: subj.name, o: view.type==="class" ? (teacher?teacher.name:"") : otherLabel, c: subj.color});
         } else {
           dayCells.push(null);
         }
       }
       return dayCells;
     });
-    return cells;
   }
 
-  function drawGrid(view){
-    document.getElementById("printTitle").textContent =
-      (view.type==="teacher" ? "Teacher Timetable — " : "Class Timetable — ") + view.label;
-    const host = document.getElementById("gridHost");
-    renderGridTable(host, {
+  function draw(view){
+    if(els.printTitleHost){
+      els.printTitleHost.textContent = (view.type==="teacher" ? "Teacher Timetable — " : "Class Timetable — ") + view.label;
+    }
+    renderGridTable(els.gridHost, {
       title: (view.type==="teacher"?"Teacher":"Class") + ": " + view.label,
-      days, periods: P, cells: buildCellData(view)
+      days: data.days, periods: data.periods, cells: cellsFor(view)
     });
   }
 
-  drawGrid(views[0]);
-  document.getElementById("btnPrint").addEventListener("click", ()=>window.print());
-  document.getElementById("btnCopyLink").addEventListener("click", ()=>{
-    const shareObj = {
-      v:1,
-      title: (currentView.type==="teacher"?"Teacher":"Class") + ": " + currentView.label,
-      days, periods: P,
-      cells: buildCellData(currentView)
-    };
-    copyShareLink(shareObj);
+  els.tabsHost.innerHTML = "";
+  views.forEach((v,i)=>{
+    const b = document.createElement("button");
+    b.textContent = (v.type==="teacher"?"👤 ":"🏫 ") + v.label;
+    b.className = i===0 ? "active" : "";
+    b.addEventListener("click", ()=>{
+      els.tabsHost.querySelectorAll("button").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      draw(v);
+    });
+    els.tabsHost.appendChild(b);
   });
+
+  if(views.length) draw(views[0]);
 }
 
-/* ============ SHARED READ-ONLY LINK ============ */
 function renderGridTable(host, data){
   // data: {title, days, periods, cells: [ [ {s,o,c} | null, ...periods ], ...days ] }
   let rows = "";
@@ -920,7 +926,7 @@ function copyShareLink(shareObj){
   function showResult(copied){
     if(copied){
       msgEl.style.color = "var(--good)";
-      msgEl.textContent = "Link copied! Paste it anywhere to share this timetable.";
+      msgEl.textContent = "Link copied! Anyone who opens it can pick any class or teacher.";
     } else {
       msgEl.style.color = "var(--bad)";
       msgEl.textContent = "Couldn't auto-copy — link shown below, copy it manually.";
@@ -948,7 +954,7 @@ function getViewFromHash(){
     const b64 = decodeURIComponent(h.slice(6));
     const json = b64DecodeUnicode(b64);
     const obj = JSON.parse(json);
-    if(!obj || !obj.days || !obj.cells) return null;
+    if(!obj || !obj.days || !obj.grid || !obj.classes || !obj.teachers || !obj.subjects) return null;
     return obj;
   }catch(e){ return null; }
 }
@@ -958,9 +964,11 @@ function renderSharedView(shareObj){
   document.querySelectorAll("section.panel").forEach(p=>p.style.display="none");
   const section = document.getElementById("sharedViewSection");
   section.style.display = "block";
-  document.getElementById("sharedTitle").textContent = shareObj.title || "Shared timetable";
-  const host = document.getElementById("sharedGridHost");
-  renderGridTable(host, shareObj);
+  mountTimetableViewer({
+    tabsHost: document.getElementById("sharedViewTabs"),
+    gridHost: document.getElementById("sharedGridHost"),
+    printTitleHost: document.getElementById("sharedPrintTitle")
+  }, shareObj);
   document.getElementById("btnSharedPrint").addEventListener("click", ()=>window.print());
   document.getElementById("btnSharedNew").addEventListener("click", ()=>{
     window.location.href = window.location.origin + window.location.pathname;
