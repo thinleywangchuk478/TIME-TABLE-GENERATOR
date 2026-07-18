@@ -4,14 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Timetable Generator</title>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#123a56">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Timetable">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   :root{
     --bg-1:#0a1a30;
@@ -254,7 +246,6 @@
       <p class="hero-sub">Add your teachers, classes and subjects below. The generator handles the rest — no teacher or class ever double-booked.</p>
     </div>
     <div class="hero-actions no-print">
-      <button class="btn-gold" id="btnInstall" style="display:none;">Install app</button>
       <button class="btn-ghost" id="btnLoad">Load setup</button>
       <button class="btn-ghost" id="btnSave">Save setup</button>
       <input type="file" id="fileInput" accept="application/json" style="display:none">
@@ -264,7 +255,19 @@
 
 <div class="app">
 
-  <nav class="tabs no-print">
+  <section id="sharedViewSection" style="display:none;">
+    <div class="card">
+      <h2 id="sharedTitle">Shared timetable</h2>
+      <p class="hint">This is a read-only timetable shared with you — you can view or print it, but not edit it here.</p>
+      <div class="no-print" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn-outline btn-small" id="btnSharedPrint">Print / Save as PDF</button>
+        <button class="btn-ghost btn-small" id="btnSharedNew" style="color:var(--accent-dark);border-color:var(--accent);">Create my own timetable</button>
+      </div>
+      <div id="sharedGridHost"></div>
+    </div>
+  </section>
+
+  <nav class="tabs no-print" id="mainNav">
     <button class="tab active" data-tab="setup">Setup</button>
     <button class="tab" data-tab="teachers">Teachers <span class="count" id="cntTeachers">0</span></button>
     <button class="tab" data-tab="classes">Classes <span class="count" id="cntClasses">0</span></button>
@@ -351,9 +354,20 @@
           <label>Periods / week</label>
           <input type="number" id="subjPeriods" min="1" max="20" value="4">
         </div>
+      </div>
+      <div class="field-row">
+        <div class="field" style="max-width:180px;">
+          <label>Earliest period (optional)</label>
+          <input type="number" id="subjEarliest" min="1" placeholder="e.g. 1">
+        </div>
+        <div class="field" style="max-width:180px;">
+          <label>Latest period (optional)</label>
+          <input type="number" id="subjLatest" min="1" placeholder="e.g. 4">
+        </div>
+        <p class="hint" style="margin:0 0 9px;flex-basis:100%;">Leave both blank to allow any period. E.g. set Latest period to 4 to keep a subject out of afternoon periods.</p>
         <button class="btn-gold btn-small" id="addSubject">Add</button>
       </div>
-      <table class="list-table"><thead><tr><th>Class</th><th>Subject</th><th>Teacher</th><th>Periods/wk</th><th></th></tr></thead><tbody id="subjectTable"></tbody></table>
+      <table class="list-table"><thead><tr><th>Class</th><th>Subject</th><th>Teacher</th><th>Periods/wk</th><th>Allowed periods</th><th></th></tr></thead><tbody id="subjectTable"></tbody></table>
     </div>
   </section>
 
@@ -515,13 +529,23 @@ document.getElementById("addSubject").addEventListener("click", ()=>{
   const nameInput = document.getElementById("subjName");
   const name = nameInput.value.trim();
   const periods = Math.max(1, parseInt(document.getElementById("subjPeriods").value)||1);
+  const earliestRaw = document.getElementById("subjEarliest").value;
+  const latestRaw = document.getElementById("subjLatest").value;
+  let earliestPeriod = earliestRaw ? Math.max(1, parseInt(earliestRaw)) : null;
+  let latestPeriod = latestRaw ? Math.max(1, parseInt(latestRaw)) : null;
   if(!classId || !teacherId || !name){
     alert("Please add at least one class and one teacher first, and give the subject a name.");
     return;
   }
+  if(earliestPeriod && latestPeriod && earliestPeriod > latestPeriod){
+    alert("Earliest period can't be after latest period.");
+    return;
+  }
   const color = PALETTE[state.subjects.length % PALETTE.length];
-  state.subjects.push({id:newId(), classId, teacherId, name, periodsPerWeek:periods, color});
+  state.subjects.push({id:newId(), classId, teacherId, name, periodsPerWeek:periods, color, earliestPeriod, latestPeriod});
   nameInput.value = "";
+  document.getElementById("subjEarliest").value = "";
+  document.getElementById("subjLatest").value = "";
   renderSubjects();
 });
 
@@ -529,16 +553,21 @@ function renderSubjects(){
   const tbody = document.getElementById("subjectTable");
   tbody.innerHTML = "";
   if(state.subjects.length===0){
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No subjects assigned yet — add rows above.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-row">No subjects assigned yet — add rows above.</td></tr>';
   }
   state.subjects.forEach(s=>{
     const cls = state.classes.find(c=>c.id===s.classId);
     const tch = state.teachers.find(t=>t.id===s.teacherId);
+    let windowLabel = "Any";
+    if(s.earliestPeriod || s.latestPeriod){
+      windowLabel = `${s.earliestPeriod||1}–${s.latestPeriod||state.periodsPerDay}`;
+    }
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${cls?escapeHtml(cls.name):"<em>deleted</em>"}</td>
       <td><span class="swatch" style="background:${s.color}"></span>${escapeHtml(s.name)}</td>
       <td>${tch?escapeHtml(tch.name):"<em>deleted</em>"}</td>
       <td>${s.periodsPerWeek}</td>
+      <td>${windowLabel}</td>
       <td style="text-align:right;"><button class="btn-danger" data-id="${s.id}">Remove</button></td>`;
     tr.querySelector("button").addEventListener("click", ()=>{
       state.subjects = state.subjects.filter(x=>x.id!==s.id);
@@ -572,6 +601,21 @@ function refreshGeneratePanel(){
     const total = state.subjects.filter(s=>s.classId===c.id).reduce((a,s)=>a+s.periodsPerWeek,0);
     if(total > totalSlotsPerClass){
       problems.push(`"${c.name}" needs ${total} periods/week but only ${totalSlotsPerClass} slots exist — reduce periods or add more days/periods.`);
+    }
+  });
+
+  // restricted-window feasibility check (e.g. "not after period 4")
+  state.subjects.forEach(s=>{
+    if(!s.earliestPeriod && !s.latestPeriod) return;
+    const lo = Math.max(1, s.earliestPeriod || 1);
+    const hi = Math.min(state.periodsPerDay, s.latestPeriod || state.periodsPerDay);
+    const windowSize = Math.max(0, hi - lo + 1);
+    const maxAvailable = windowSize * state.days.length;
+    const cls = state.classes.find(c=>c.id===s.classId);
+    if(windowSize === 0){
+      problems.push(`"${s.name}" (${cls?cls.name:""}) has an invalid period window — check earliest/latest period values.`);
+    } else if(s.periodsPerWeek > maxAvailable){
+      problems.push(`"${s.name}" (${cls?cls.name:""}) needs ${s.periodsPerWeek} periods/week but is restricted to periods ${lo}–${hi}, giving only ${maxAvailable} possible slots across the week.`);
     }
   });
 
@@ -682,6 +726,9 @@ function attemptGenerate(){
       if(remaining[classId][s.id] <= 0) return false;
       if(teacherBusy[s.teacherId][d][p]) return false;
       if(dailyCount[classId][s.id][d] >= dailyCap) return false;
+      const periodNum = p + 1; // 1-indexed for comparison with user-entered values
+      if(s.earliestPeriod && periodNum < s.earliestPeriod) return false;
+      if(s.latestPeriod && periodNum > s.latestPeriod) return false;
       return true;
     });
     // prioritize subjects with more remaining periods, small shuffle for variety
@@ -746,7 +793,11 @@ function renderResult(){
   const {grid, days, P} = lastResult;
 
   let html = `<div class="tt-tabs no-print" id="viewTabs"></div>`;
-  html += `<div class="no-print" style="margin-bottom:14px;"><button class="btn-outline btn-small" id="btnPrint">Print / Save as PDF</button></div>`;
+  html += `<div class="no-print" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <button class="btn-outline btn-small" id="btnPrint">Print / Save as PDF</button>
+      <button class="btn-outline btn-small" id="btnCopyLink">🔗 Copy shareable link</button>
+      <span id="linkMsg" style="font-size:13px;color:var(--good);"></span>
+    </div>`;
   html += `<div class="print-title" id="printTitle"></div>`;
   html += `<div id="gridHost"></div>`;
   area.innerHTML = html;
@@ -756,6 +807,8 @@ function renderResult(){
     ...state.teachers.map(t=>({type:"teacher", id:t.id, label:t.name}))
   ];
 
+  let currentView = views[0];
+
   const tabsWrap = document.getElementById("viewTabs");
   views.forEach((v,i)=>{
     const b = document.createElement("button");
@@ -764,58 +817,156 @@ function renderResult(){
     b.addEventListener("click", ()=>{
       tabsWrap.querySelectorAll("button").forEach(x=>x.classList.remove("active"));
       b.classList.add("active");
+      currentView = v;
       drawGrid(v);
+      document.getElementById("linkMsg").textContent = "";
     });
     tabsWrap.appendChild(b);
   });
 
-  function drawGrid(view){
-    document.getElementById("printTitle").textContent =
-      (view.type==="teacher" ? "Teacher Timetable — " : "Class Timetable — ") + view.label;
-    const host = document.getElementById("gridHost");
-    let rows = "";
-    days.forEach(d=>{
-      rows += `<tr><td class="period-label">${d}</td>`;
+  function buildCellData(view){
+    // compact per-day/per-period export: {s: subject name, o: other party label, c: color}
+    const cells = days.map(d=>{
+      const dayCells = [];
       for(let p=0;p<P;p++){
         let subjId = null;
-        let classLabelForTeacher = null;
+        let otherLabel = null;
         if(view.type === "class"){
           subjId = grid[view.id][d][p];
         } else {
-          // find which class this teacher is teaching at this slot
           for(const c of state.classes){
             const sid = grid[c.id][d][p];
             if(sid){
               const subj = state.subjects.find(s=>s.id===sid);
-              if(subj && subj.teacherId === view.id){ subjId = sid; classLabelForTeacher = c.name; break; }
+              if(subj && subj.teacherId === view.id){ subjId = sid; otherLabel = c.name; break; }
             }
           }
         }
         if(subjId){
           const subj = state.subjects.find(s=>s.id===subjId);
           const teacher = state.teachers.find(t=>t.id===subj.teacherId);
-          rows += `<td style="background:${subj.color}22;">
-            <div class="cell-block">
-              <div class="cell-subject">${escapeHtml(subj.name)}</div>
-              <div class="cell-teacher">${view.type==="class" ? escapeHtml(teacher.name) : escapeHtml(classLabelForTeacher)}</div>
-            </div></td>`;
+          dayCells.push({s: subj.name, o: view.type==="class" ? teacher.name : otherLabel, c: subj.color});
         } else {
-          rows += `<td><div class="cell-block"><span class="cell-free">Free</span></div></td>`;
+          dayCells.push(null);
         }
       }
-      rows += `</tr>`;
+      return dayCells;
     });
-    const periodHeaders = Array.from({length:P}, (_,i)=>`<th>Period ${i+1}</th>`).join("");
-    host.innerHTML = `<div class="grid-wrap"><table class="tt-grid">
-      <thead><tr><th class="corner">${view.type==="teacher"?"Teacher":"Class"}: ${escapeHtml(view.label)}</th>${periodHeaders}</tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
+    return cells;
+  }
+
+  function drawGrid(view){
+    document.getElementById("printTitle").textContent =
+      (view.type==="teacher" ? "Teacher Timetable — " : "Class Timetable — ") + view.label;
+    const host = document.getElementById("gridHost");
+    renderGridTable(host, {
+      title: (view.type==="teacher"?"Teacher":"Class") + ": " + view.label,
+      days, periods: P, cells: buildCellData(view)
+    });
   }
 
   drawGrid(views[0]);
   document.getElementById("btnPrint").addEventListener("click", ()=>window.print());
+  document.getElementById("btnCopyLink").addEventListener("click", ()=>{
+    const shareObj = {
+      v:1,
+      title: (currentView.type==="teacher"?"Teacher":"Class") + ": " + currentView.label,
+      days, periods: P,
+      cells: buildCellData(currentView)
+    };
+    copyShareLink(shareObj);
+  });
 }
 
-/* ============ SAVE / LOAD ============ */
+/* ============ SHARED READ-ONLY LINK ============ */
+function renderGridTable(host, data){
+  // data: {title, days, periods, cells: [ [ {s,o,c} | null, ...periods ], ...days ] }
+  let rows = "";
+  data.days.forEach((d,di)=>{
+    rows += `<tr><td class="period-label">${escapeHtml(d)}</td>`;
+    for(let p=0;p<data.periods;p++){
+      const cell = data.cells[di] ? data.cells[di][p] : null;
+      if(cell){
+        rows += `<td style="background:${cell.c||'#4c8dff'}22;">
+          <div class="cell-block">
+            <div class="cell-subject">${escapeHtml(cell.s)}</div>
+            <div class="cell-teacher">${cell.o?escapeHtml(cell.o):""}</div>
+          </div></td>`;
+      } else {
+        rows += `<td><div class="cell-block"><span class="cell-free">Free</span></div></td>`;
+      }
+    }
+    rows += `</tr>`;
+  });
+  const periodHeaders = Array.from({length:data.periods}, (_,i)=>`<th>Period ${i+1}</th>`).join("");
+  host.innerHTML = `<div class="grid-wrap"><table class="tt-grid">
+    <thead><tr><th class="corner">${escapeHtml(data.title)}</th>${periodHeaders}</tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function b64EncodeUnicode(str){
+  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (m,p1)=>String.fromCharCode('0x'+p1)));
+}
+function b64DecodeUnicode(str){
+  return decodeURIComponent(Array.prototype.map.call(atob(str), c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+}
+
+function copyShareLink(shareObj){
+  const json = JSON.stringify(shareObj);
+  const b64 = b64EncodeUnicode(json);
+  const url = window.location.origin + window.location.pathname + "#view=" + encodeURIComponent(b64);
+  const msgEl = document.getElementById("linkMsg");
+
+  function showResult(copied){
+    if(copied){
+      msgEl.style.color = "var(--good)";
+      msgEl.textContent = "Link copied! Paste it anywhere to share this timetable.";
+    } else {
+      msgEl.style.color = "var(--bad)";
+      msgEl.textContent = "Couldn't auto-copy — link shown below, copy it manually.";
+    }
+    if(url.length > 6000){
+      msgEl.textContent += " (Note: this is a long link — some apps may not accept it.)";
+    }
+  }
+
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(()=>showResult(true)).catch(()=>{
+      showResult(false);
+      window.prompt("Copy this link:", url);
+    });
+  } else {
+    showResult(false);
+    window.prompt("Copy this link:", url);
+  }
+}
+
+function getViewFromHash(){
+  const h = window.location.hash;
+  if(!h.startsWith("#view=")) return null;
+  try{
+    const b64 = decodeURIComponent(h.slice(6));
+    const json = b64DecodeUnicode(b64);
+    const obj = JSON.parse(json);
+    if(!obj || !obj.days || !obj.cells) return null;
+    return obj;
+  }catch(e){ return null; }
+}
+
+function renderSharedView(shareObj){
+  document.getElementById("mainNav").style.display = "none";
+  document.querySelectorAll("section.panel").forEach(p=>p.style.display="none");
+  const section = document.getElementById("sharedViewSection");
+  section.style.display = "block";
+  document.getElementById("sharedTitle").textContent = shareObj.title || "Shared timetable";
+  const host = document.getElementById("sharedGridHost");
+  renderGridTable(host, shareObj);
+  document.getElementById("btnSharedPrint").addEventListener("click", ()=>window.print());
+  document.getElementById("btnSharedNew").addEventListener("click", ()=>{
+    window.location.href = window.location.origin + window.location.pathname;
+  });
+}
+
 document.getElementById("btnSave").addEventListener("click", ()=>{
   const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
   const url = URL.createObjectURL(blob);
@@ -853,33 +1004,15 @@ function escapeHtml(str){
 }
 
 /* ============ INIT ============ */
-renderTeachers();
-renderClasses();
-renderSubjects();
-refreshSubjectDropdowns();
-
-/* ============ PWA: install + service worker ============ */
-if("serviceWorker" in navigator){
-  window.addEventListener("load", ()=>{
-    navigator.serviceWorker.register("sw.js").catch(()=>{});
-  });
+const sharedViewFromUrl = getViewFromHash();
+if(sharedViewFromUrl){
+  renderSharedView(sharedViewFromUrl);
+} else {
+  renderTeachers();
+  renderClasses();
+  renderSubjects();
+  refreshSubjectDropdowns();
 }
-let deferredInstallPrompt = null;
-window.addEventListener("beforeinstallprompt", (e)=>{
-  e.preventDefault();
-  deferredInstallPrompt = e;
-  const btn = document.getElementById("btnInstall");
-  btn.style.display = "inline-block";
-  btn.addEventListener("click", async ()=>{
-    btn.style.display = "none";
-    deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-  });
-});
-window.addEventListener("appinstalled", ()=>{
-  document.getElementById("btnInstall").style.display = "none";
-});
 </script>
 </body>
 </html>
